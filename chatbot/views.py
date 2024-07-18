@@ -159,10 +159,6 @@ def text_to_speech(text):
 def get_predefined_response(message):
     message = message.lower()
     
-    greetings = ["hiii", "hello", "yoo", "namaste"]
-    if any(greeting in message for greeting in greetings):
-        return "Namaste! How can I assist you today? Any Questions?"
-    
     identity_questions = ["who are you", "what are you", "who made you", "who created you"]
     if any(question in message for question in identity_questions):
         return ("I'm Nivan, the AI helper created by six undergrads. I'm intended to assist with a wide range of task "

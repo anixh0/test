@@ -24,8 +24,8 @@ from gtts import gTTS
 from django.conf import settings
 
 # Set the API keys directly
-groq_api_key = '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'
-google_api_key = 'AIzaSyBEOGhQARGVBw98wgBx2zjD_2NbO_qMMaE'
+groq_api_key = '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'
+google_api_key = 'AIzaSyCgVluEDmQNF8GnFcTSO_UHvBZzbsOobk0'
 huggingface_api_key = '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'
 
 # Initialize Groq Langchain chat object
@@ -72,16 +72,19 @@ groq_conversation = LLMChain(
     memory=memory,
 )
 
+# Initialize conversation history
+conversation_history = []
+
 # Function to clean response text
 def clean_response(text):
     cleaned_text = text.replace('*', '')
     cleaned_text = '\n'.join(line.strip() for line in cleaned_text.split('\n'))
     return cleaned_text
 
-# Function to ask a question to Groq API
+# Updated ask_groq function
 async def ask_groq(question, chat_history):
     memory.clear()
-    for message in chat_history:
+    for message in chat_history[-5:]:  # Consider only the last 5 messages
         memory.save_context(
             {'input': message['human']},
             {'output': message['AI']}
@@ -92,18 +95,16 @@ async def ask_groq(question, chat_history):
     except Exception as e:
         return clean_response(f"An error occurred: {str(e)}")
 
-# Function to ask a question to Google Generative AI
+# Updated ask_google function
 async def ask_google(question, conversation_history):
+    history_text = "\n".join([f"Human: {msg['human']}\nAI: {msg['AI']}" for msg in conversation_history[-5:]])
     prompt = f"""
     {google_system_prompt}
     Conversation History:
-    {conversation_history}
-    Question: {question}
-
-    Additional Information:
-
-    * For questions related to specific acts or laws, please mention them (e.g., Indian Contract Act, 1872).
-    * If you need help with legal procedures, I can provide general guidance on the steps involved but can provide specific legal advice.
+    {history_text}
+    
+    Human: {question}
+    AI:
     """
     result = await sync_to_async(llm_google.invoke)(prompt)
     return clean_response(result.content)
@@ -179,13 +180,15 @@ def get_predefined_response(message):
 
 # Updated chatbot view
 async def chatbot(request):
+    global conversation_history
+    
     if request.method == 'POST':
         message = request.POST.get('message')
-        chat_history = []  # Initialize chat history
         
         # Check for predefined responses
         predefined_response = get_predefined_response(message)
         if predefined_response:
+            conversation_history.append({'human': message, 'AI': predefined_response})
             audio_file = text_to_speech(predefined_response)
             return JsonResponse({
                 'message': message, 
@@ -203,8 +206,8 @@ async def chatbot(request):
         else:
             # Concurrently get responses from both APIs
             gemini_response, groq_response = await asyncio.gather(
-                ask_google(message, chat_history),
-                ask_groq(message, chat_history)
+                ask_google(message, conversation_history),
+                ask_groq(message, conversation_history)
             )
             
             # Get additional information from the dataset
@@ -212,6 +215,12 @@ async def chatbot(request):
             
             # Combine responses
             response = combine_responses(gemini_response, groq_response, dataset_info)
+        
+        # Update conversation history
+        conversation_history.append({'human': message, 'AI': response})
+        
+        # Limit conversation history to last 10 messages
+        conversation_history = conversation_history[-10:]
         
         # Generate audio file
         audio_file = text_to_speech(response)

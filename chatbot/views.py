@@ -38,7 +38,7 @@ if not model_name:
     raise ValueError("No suitable model found.")
 
 llm_google = ChatGoogleGenerativeAI(model=model_name, google_api_key=google_api_key)
-llm_google_vision = ChatGoogleGenerativeAI(model="gemini-pro-vision", google_api_key=google_api_key)
+llm_google_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=google_api_key)
 
 # Load the Indian legal corpus dataset
 ds = load_dataset("sujantkumarkv/indian_legal_corpus", use_auth_token=huggingface_api_key)

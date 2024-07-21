@@ -24,8 +24,8 @@ from gtts import gTTS
 from django.conf import settings
 
 # Set the API keys directly
-groq_api_key = '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'
-google_api_key = 'AIzaSyCgVluEDmQNF8GnFcTSO_UHvBZzbsOobk0'
+groq_api_key = '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'
+google_api_key = 'AIzaSyBMV7qNGbA9TuCA_aWCvqqeNibQBXX5fP4'
 huggingface_api_key = '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'
 
 # Initialize Groq Langchain chat object
@@ -231,4 +231,4 @@ async def chatbot(request):
             'audio_url': request.build_absolute_uri(audio_file)
         })
     
-    return render(request, 'chatbot.html')
+    return render(request, 'chatbot.html') 

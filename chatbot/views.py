@@ -24,8 +24,8 @@ from gtts import gTTS
 from django.conf import settings
 
 # Set the API keys directly
-groq_api_key = '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'
-google_api_key = 'AIzaSyBMV7qNGbA9TuCA_aWCvqqeNibQBXX5fP4'
+groq_api_key = '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'
+google_api_key = 'AIzaSyAjZY4oublS-3OjdZ7cGm5L5xgUVFBf2M4'
 huggingface_api_key = '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'
 
 # Initialize Groq Langchain chat object

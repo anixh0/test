@@ -115,7 +115,7 @@ async def process_image_question(image, question):
         image = image.convert('RGB')
     
     buffered = io.BytesIO()
-    image.save(buffered, format="JPEG")
+    image.save(buffered, format="JPEG", )
     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
     img_data_uri = f"data:image/jpeg;base64,{img_str}"
     
@@ -136,16 +136,17 @@ async def process_image_question(image, question):
     result = await sync_to_async(llm_google_vision.invoke)([message])
     return clean_response(result.content)
 
-# Function to get additional information from the dataset
+# Updated function to get additional information from the dataset
 def get_dataset_info(question):
     relevant_entries = [entry for entry in ds['train'] if question.lower() in entry['text'].lower()]
     if relevant_entries:
         return clean_response(relevant_entries[0]['text'])
-    return clean_response("Any further Questions ? I am happy to help you !")
+    return ""  # Return an empty string instead of the default message
 
-# Function to combine responses with dataset information
+# Updated function to combine responses with dataset information
 def combine_responses(gemini_response, groq_response, dataset_info):
-    combined_response = f"{gemini_response}\n\n{groq_response}\n\n{dataset_info}"
+    responses = [r for r in [gemini_response, groq_response, dataset_info] if r]
+    combined_response = "\n\n".join(responses)
     return clean_response(combined_response)
 
 # Text-to-speech function
@@ -231,4 +232,4 @@ async def chatbot(request):
             'audio_url': request.build_absolute_uri(audio_file)
         })
     
-    return render(request, 'chatbot.html') 
+    return render(request, 'chatbot.html')

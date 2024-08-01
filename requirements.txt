@@ -12,3 +12,4 @@ langchain-groq==0.1.6
 langchain-text-splitters==0.2.2
 pillow==10.4.0
 gunicorn
+aiofiles

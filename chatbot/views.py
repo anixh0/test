@@ -3,7 +3,6 @@ import asyncio
 import base64
 import io
 import time
-import re
 from PIL import Image
 from langchain.chains import LLMChain
 from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder
@@ -18,18 +17,21 @@ from asgiref.sync import sync_to_async
 from datasets import load_dataset
 from gtts import gTTS
 from django.conf import settings
+import aiohttp
+import aiofiles
+from functools import lru_cache
 
 # Set the API keys directly
 groq_api_key = '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'
 google_api_key = 'AIzaSyBsNsY1-gm3D2INK1TJKpgbm-YPc6SxpWg'
 huggingface_api_key = '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'
 
-# Initialize Groq Langchain chat object with Llama-3.1-8B-Instruct
+# Initialize Groq Langchain chat object with Llama-3.1-70b-Versatile
 groq_chat = ChatGroq(api_key=groq_api_key, model_name='llama-3.1-70b-versatile')
 
 # Configure Google Generative AI for image processing only
 genai.configure(api_key=google_api_key)
-llm_google_vision = ChatGoogleGenerativeAI(model="gemini-1.0-pro-vision", google_api_key=google_api_key)
+llm_google_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=google_api_key)
 
 # Load the Indian legal corpus dataset
 ds = load_dataset("sujantkumarkv/indian_legal_corpus", use_auth_token=huggingface_api_key)
@@ -73,16 +75,32 @@ def clean_response(text):
     cleaned_text = '\n'.join(line.strip() for line in cleaned_text.split('\n'))
     return cleaned_text
 
-# Updated ask_groq function
+# Updated ask_groq function to use aiohttp for async API calls
 async def ask_groq(question, chat_history):
     memory.clear()
-    for message in chat_history[-5:]:  # Consider only the last 5 messages
+    for message in chat_history[-5:]:
         memory.save_context(
             {'input': message['human']},
             {'output': message['AI']}
         )
     try:
-        response = await sync_to_async(groq_conversation.predict)(human_input=question)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {groq_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.1-70b-versatile",
+                    "messages": [
+                        {"role": "system", "content": groq_system_prompt},
+                        {"role": "user", "content": question}
+                    ]
+                }
+            ) as resp:
+                result = await resp.json()
+                response = result['choices'][0]['message']['content']
         return clean_response(response)
     except Exception as e:
         return clean_response(f"An error occurred: {str(e)}")
@@ -116,7 +134,8 @@ async def process_image_question(image, question):
     result = await sync_to_async(llm_google_vision.invoke)([message])
     return clean_response(result.content)
 
-# Function to get additional information from the dataset
+# Function to get additional information from the dataset with caching
+@lru_cache(maxsize=100)
 def get_dataset_info(question):
     relevant_entries = [entry for entry in ds['train'] if question.lower() in entry['text'].lower()]
     if relevant_entries:
@@ -131,12 +150,12 @@ def combine_responses(groq_response, dataset_info):
         combined_response = groq_response
     return clean_response(combined_response)
 
-# Text-to-speech function
-def text_to_speech(text):
+# Asynchronous text-to-speech function
+async def text_to_speech(text):
     tts = gTTS(text=text, lang='en')
     filename = f"response_{int(time.time())}.mp3"
     file_path = os.path.join(settings.MEDIA_ROOT, filename)
-    tts.save(file_path)
+    await sync_to_async(tts.save)(file_path)
     return os.path.join(settings.MEDIA_URL, filename)
 
 # Function to get predefined responses
@@ -172,7 +191,7 @@ async def chatbot(request):
         predefined_response = get_predefined_response(message)
         if predefined_response:
             conversation_history.append({'human': message, 'AI': predefined_response})
-            audio_file = text_to_speech(predefined_response)
+            audio_file = await text_to_speech(predefined_response)
             return JsonResponse({
                 'message': message, 
                 'response': predefined_response,
@@ -191,7 +210,7 @@ async def chatbot(request):
             groq_response = await ask_groq(message, conversation_history)
             
             # Get additional information from the dataset
-            dataset_info = get_dataset_info(message)
+            dataset_info = await sync_to_async(get_dataset_info)(message)
             
             # Combine responses
             response = combine_responses(groq_response, dataset_info)
@@ -202,8 +221,8 @@ async def chatbot(request):
         # Limit conversation history to last 10 messages
         conversation_history = conversation_history[-10:]
         
-        # Generate audio file
-        audio_file = text_to_speech(response)
+        # Generate audio file asynchronously
+        audio_file = await text_to_speech(response)
         
         return JsonResponse({
             'message': message, 

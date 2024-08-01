@@ -6,13 +6,9 @@ import time
 import re
 from PIL import Image
 from langchain.chains import LLMChain
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-)
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain.chains.conversation.memory import ConversationBufferWindowMemory
+from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder
+from langchain.schema import SystemMessage, HumanMessage
+from langchain.memory import ConversationBufferWindowMemory
 from langchain_groq import ChatGroq
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -24,32 +20,28 @@ from gtts import gTTS
 from django.conf import settings
 
 # Set the API keys directly
-groq_api_key = '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'
-google_api_key = 'AIzaSyAjZY4oublS-3OjdZ7cGm5L5xgUVFBf2M4'
+groq_api_key = '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'
+google_api_key = 'AIzaSyBsNsY1-gm3D2INK1TJKpgbm-YPc6SxpWg'
 huggingface_api_key = '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'
 
-# Initialize Groq Langchain chat object
-groq_chat = ChatGroq(groq_api_key=groq_api_key, model_name='llama3-8b-8192')
+# Initialize Groq Langchain chat object with Llama-3.1-8B-Instruct
+groq_chat = ChatGroq(api_key=groq_api_key, model_name='llama-3.1-70b-versatile')
 
-# Configure Google Generative AI
+# Configure Google Generative AI for image processing only
 genai.configure(api_key=google_api_key)
-model_name = next((m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods), None)
-if not model_name:
-    raise ValueError("No suitable model found.")
-
-llm_google = ChatGoogleGenerativeAI(model=model_name, google_api_key=google_api_key)
-llm_google_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=google_api_key)
+llm_google_vision = ChatGoogleGenerativeAI(model="gemini-1.0-pro-vision", google_api_key=google_api_key)
 
 # Load the Indian legal corpus dataset
 ds = load_dataset("sujantkumarkv/indian_legal_corpus", use_auth_token=huggingface_api_key)
 
 # Define the prompts
 groq_system_prompt = """
-You are an expert in Indian law. Provide brief and concise legal advice, mentioning relevant acts and examples. Keep your responses short and to the point.
-"""
+You are Nivan, an expert in Indian law, with knowledge up to 2024. Provide legal advice in the following structure:
+1. Explanation: Briefly explain the legal concept or issue.
+2. Relevant Law: Cite the specific Indian law act or section that applies.
+3. Example: Provide a practical example to illustrate the application of the law.
 
-google_system_prompt = """
-You are an Indian law expert named Nivan. Provide brief and concise legal advice, mentioning relevant acts and examples. Keep your responses short and to the point.
+Keep your responses concise and to the point.
 """
 
 # Define the prompt template for Groq
@@ -95,34 +87,22 @@ async def ask_groq(question, chat_history):
     except Exception as e:
         return clean_response(f"An error occurred: {str(e)}")
 
-# Updated ask_google function
-async def ask_google(question, conversation_history):
-    history_text = "\n".join([f"Human: {msg['human']}\nAI: {msg['AI']}" for msg in conversation_history[-5:]])
-    prompt = f"""
-    {google_system_prompt}
-    Conversation History:
-    {history_text}
-    
-    Human: {question}
-    AI:
-    """
-    result = await sync_to_async(llm_google.invoke)(prompt)
-    return clean_response(result.content)
-
 # Function to process image and ask question to Google Generative AI Vision
 async def process_image_question(image, question):
     if image.mode == 'RGBA':
         image = image.convert('RGB')
     
     buffered = io.BytesIO()
-    image.save(buffered, format="JPEG", )
+    image.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
     img_data_uri = f"data:image/jpeg;base64,{img_str}"
     
-    prompt = f"""You are Nivan, an AI bot with extensive knowledge of Indian law. 
+    prompt = f"""You are Nivan, an AI bot with extensive knowledge of Indian law up to 2024. 
     Analyze the image and answer the following question: "{question}"
-    Provide a detailed explanation, drawing on your expertise in Indian law where relevant. 
-    Be thorough in your analysis and explain any legal concepts or implications you observe."""
+    Provide a response in the following structure:
+    1. Explanation: Briefly explain what you see in the image related to the question.
+    2. Relevant Law: Cite any specific Indian law act or section that might apply to the situation in the image.
+    3. Example: Provide a practical example of how the law might apply in a similar real-world scenario."""
     
     message = HumanMessage(
         content=[
@@ -136,17 +116,19 @@ async def process_image_question(image, question):
     result = await sync_to_async(llm_google_vision.invoke)([message])
     return clean_response(result.content)
 
-# Updated function to get additional information from the dataset
+# Function to get additional information from the dataset
 def get_dataset_info(question):
     relevant_entries = [entry for entry in ds['train'] if question.lower() in entry['text'].lower()]
     if relevant_entries:
         return clean_response(relevant_entries[0]['text'])
-    return ""  # Return an empty string instead of the default message
+    return ""
 
-# Updated function to combine responses with dataset information
-def combine_responses(gemini_response, groq_response, dataset_info):
-    responses = [r for r in [gemini_response, groq_response, dataset_info] if r]
-    combined_response = "\n\n".join(responses)
+# Function to combine responses with dataset information
+def combine_responses(groq_response, dataset_info):
+    if dataset_info:
+        combined_response = f"{groq_response}\n\nAdditional Information:\n{dataset_info}"
+    else:
+        combined_response = groq_response
     return clean_response(combined_response)
 
 # Text-to-speech function
@@ -163,19 +145,19 @@ def get_predefined_response(message):
     
     identity_questions = ["who are you", "what are you", "who made you", "who created you"]
     if any(question in message for question in identity_questions):
-        return ("I'm Nivan, the AI helper created by six undergrads. I'm intended to assist with a wide range of task "
-                "discussions concerning Indian legal concerns. I do not have a physical form or avatar; instead, I am "
-                "a model of language trained to engage in conversation and aid with chores. How can I help you today?")
+        return ("I'm Nivan, an AI assistant specializing in Indian law, with knowledge up to 2024. "
+                "I was created to help with discussions and queries related to Indian legal matters. "
+                "How can I assist you today?")
     
     if "how are you" in message:
-        return "I am fine! What about you? How can I help you regarding any Legal issues?"
+        return "I'm functioning well, thank you! How can I assist you with any legal issues today?"
     
     if "what are you doing" in message:
-        return "Ready to solve your Legal issues! Any questions?"
+        return "I'm here and ready to help with any legal questions or issues you might have. What can I do for you?"
     
     goodbyes = ["bye", "goodbye", "exit", "see you", "farewell"]
     if any(goodbye in message for goodbye in goodbyes):
-        return "Goodbye! Feel free to return if you have any legal issues, questions, or need assistance in the future."
+        return "Thank you for using my services. If you have any more legal questions in the future, don't hesitate to ask. Goodbye!"
     
     return None
 
@@ -201,21 +183,18 @@ async def chatbot(request):
         uploaded_image = request.FILES.get('image')
         
         if uploaded_image:
-            # Process the image and question
+            # Process the image and question using Gemini
             image = Image.open(uploaded_image)
             response = await process_image_question(image, message)
         else:
-            # Concurrently get responses from both APIs
-            gemini_response, groq_response = await asyncio.gather(
-                ask_google(message, conversation_history),
-                ask_groq(message, conversation_history)
-            )
+            # Get response from Groq
+            groq_response = await ask_groq(message, conversation_history)
             
             # Get additional information from the dataset
             dataset_info = get_dataset_info(message)
             
             # Combine responses
-            response = combine_responses(gemini_response, groq_response, dataset_info)
+            response = combine_responses(groq_response, dataset_info)
         
         # Update conversation history
         conversation_history.append({'human': message, 'AI': response})

@@ -20,6 +20,7 @@ from django.conf import settings
 import aiohttp
 import aiofiles
 from functools import lru_cache
+from langdetect import detect
 
 # Set the API keys directly
 groq_api_key = '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'
@@ -36,6 +37,9 @@ llm_google_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_
 # Load the Indian legal corpus dataset
 ds = load_dataset("sujantkumarkv/indian_legal_corpus", use_auth_token=huggingface_api_key)
 
+# Add a global variable to track the current language
+current_language = 'en'
+
 # Define the prompts
 groq_system_prompt = """
 You are Nivan, an expert in Indian law, with knowledge up to 2024. Provide legal advice in the following structure:
@@ -44,6 +48,8 @@ You are Nivan, an expert in Indian law, with knowledge up to 2024. Provide legal
 3. Example: Provide a practical example to illustrate the application of the law.
 
 Keep your responses concise and to the point.
+
+Important: Respond in the same language as the user's input. If the user specifies a language, use that language for your response.
 """
 
 # Define the prompt template for Groq
@@ -75,8 +81,17 @@ def clean_response(text):
     cleaned_text = '\n'.join(line.strip() for line in cleaned_text.split('\n'))
     return cleaned_text
 
-# Updated ask_groq function to use aiohttp for async API calls
+# Updated ask_groq function to use aiohttp for async API calls and include language detection
 async def ask_groq(question, chat_history):
+    global current_language
+    
+    # Detect the language of the question
+    detected_language = detect(question)
+    
+    # Update the current_language if a new language is detected
+    if detected_language != current_language:
+        current_language = detected_language
+    
     memory.clear()
     for message in chat_history[-5:]:
         memory.save_context(
@@ -95,7 +110,7 @@ async def ask_groq(question, chat_history):
                     "model": "llama-3.1-70b-versatile",
                     "messages": [
                         {"role": "system", "content": groq_system_prompt},
-                        {"role": "user", "content": question}
+                        {"role": "user", "content": f"Respond in {current_language}. Question: {question}"}
                     ]
                 }
             ) as resp:
@@ -105,8 +120,10 @@ async def ask_groq(question, chat_history):
     except Exception as e:
         return clean_response(f"An error occurred: {str(e)}")
 
-# Function to process image and ask question to Google Generative AI Vision
+# Updated process_image_question function to include language awareness
 async def process_image_question(image, question):
+    global current_language
+    
     if image.mode == 'RGBA':
         image = image.convert('RGB')
     
@@ -120,7 +137,9 @@ async def process_image_question(image, question):
     Provide a response in the following structure:
     1. Explanation: Briefly explain what you see in the image related to the question.
     2. Relevant Law: Cite any specific Indian law act or section that might apply to the situation in the image.
-    3. Example: Provide a practical example of how the law might apply in a similar real-world scenario."""
+    3. Example: Provide a practical example of how the law might apply in a similar real-world scenario.
+    
+    Important: Respond in {current_language}."""
     
     message = HumanMessage(
         content=[
@@ -150,9 +169,9 @@ def combine_responses(groq_response, dataset_info):
         combined_response = groq_response
     return clean_response(combined_response)
 
-# Asynchronous text-to-speech function
+# Updated text-to-speech function to use the correct language
 async def text_to_speech(text):
-    tts = gTTS(text=text, lang='en')
+    tts = gTTS(text=text, lang=current_language)
     filename = f"response_{int(time.time())}.mp3"
     file_path = os.path.join(settings.MEDIA_ROOT, filename)
     await sync_to_async(tts.save)(file_path)
@@ -180,12 +199,33 @@ def get_predefined_response(message):
     
     return None
 
-# Updated chatbot view
+# Updated chatbot view to handle language changes
 async def chatbot(request):
-    global conversation_history
+    global conversation_history, current_language
     
     if request.method == 'POST':
         message = request.POST.get('message')
+        
+        # Detect the language of the message
+        detected_language = detect(message)
+        
+        # Update the current_language if a new language is detected
+        if detected_language != current_language:
+            current_language = detected_language
+        
+        # Check for language change requests
+        if "respond in" in message.lower():
+            language_request = message.lower().split("respond in")[-1].strip()
+            if language_request in ['english', 'marathi', 'hindi']:  # Add more languages as needed
+                current_language = language_request
+                response = f"Sure, I'll respond in {language_request} from now on."
+                conversation_history.append({'human': message, 'AI': response})
+                audio_file = await text_to_speech(response)
+                return JsonResponse({
+                    'message': message, 
+                    'response': response,
+                    'audio_url': request.build_absolute_uri(audio_file)
+                })
         
         # Check for predefined responses
         predefined_response = get_predefined_response(message)
@@ -231,5 +271,3 @@ async def chatbot(request):
         })
     
     return render(request, 'chatbot.html')
-
-

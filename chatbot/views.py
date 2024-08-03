@@ -37,6 +37,15 @@ llm_google_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_
 # Load the Indian legal corpus dataset
 ds = load_dataset("sujantkumarkv/indian_legal_corpus", use_auth_token=huggingface_api_key)
 
+# Define language codes and names
+LANGUAGE_CODES = {
+    'en': 'english',
+    'hi': 'hindi',
+    'mr': 'marathi'
+}
+
+LANGUAGE_NAMES = {v: k for k, v in LANGUAGE_CODES.items()}
+
 # Add a global variable to track the current language
 current_language = 'en'
 
@@ -49,7 +58,7 @@ You are Nivan, an expert in Indian law, with knowledge up to 2024. Provide legal
 
 Keep your responses concise and to the point.
 
-Important: Respond in the same language as the user's input. If the user specifies a language, use that language for your response.
+Important: Always respond in the language specified in the user's input. If no language is specified, use the current language setting.
 """
 
 # Define the prompt template for Groq
@@ -81,17 +90,33 @@ def clean_response(text):
     cleaned_text = '\n'.join(line.strip() for line in cleaned_text.split('\n'))
     return cleaned_text
 
-# Updated ask_groq function to use aiohttp for async API calls and include language detection
-async def ask_groq(question, chat_history):
+# Updated function to determine the response language
+def determine_response_language(message):
     global current_language
     
-    # Detect the language of the question
-    detected_language = detect(question)
+    language_keywords = {
+        'english': ['in english', 'explain in english'],
+        'hindi': ['in hindi', 'explain in hindi', 'hindi me batao'],
+        'marathi': ['in marathi', 'explain in marathi', 'marathi madhe sanga']
+    }
     
-    # Update the current_language if a new language is detected
-    if detected_language != current_language:
-        current_language = detected_language
+    message_lower = message.lower()
     
+    # Check for explicit language requests
+    for lang, keywords in language_keywords.items():
+        if any(keyword in message_lower for keyword in keywords):
+            return LANGUAGE_NAMES[lang]
+    
+    # If no explicit request, detect the language
+    detected_lang = detect(message)
+    if detected_lang in LANGUAGE_CODES:
+        return detected_lang
+    
+    # If detection fails or returns an unsupported language, use the current language
+    return current_language
+
+# Updated ask_groq function
+async def ask_groq(question, chat_history, language):
     memory.clear()
     for message in chat_history[-5:]:
         memory.save_context(
@@ -110,7 +135,7 @@ async def ask_groq(question, chat_history):
                     "model": "llama-3.1-70b-versatile",
                     "messages": [
                         {"role": "system", "content": groq_system_prompt},
-                        {"role": "user", "content": f"Respond in {current_language}. Question: {question}"}
+                        {"role": "user", "content": f"Respond in {LANGUAGE_CODES[language]}. Question: {question}"}
                     ]
                 }
             ) as resp:
@@ -120,10 +145,8 @@ async def ask_groq(question, chat_history):
     except Exception as e:
         return clean_response(f"An error occurred: {str(e)}")
 
-# Updated process_image_question function to include language awareness
-async def process_image_question(image, question):
-    global current_language
-    
+# Updated process_image_question function
+async def process_image_question(image, question, language):
     if image.mode == 'RGBA':
         image = image.convert('RGB')
     
@@ -139,7 +162,7 @@ async def process_image_question(image, question):
     2. Relevant Law: Cite any specific Indian law act or section that might apply to the situation in the image.
     3. Example: Provide a practical example of how the law might apply in a similar real-world scenario.
     
-    Important: Respond in {current_language}."""
+    Important: Respond in {LANGUAGE_CODES[language]}."""
     
     message = HumanMessage(
         content=[
@@ -170,8 +193,8 @@ def combine_responses(groq_response, dataset_info):
     return clean_response(combined_response)
 
 # Updated text-to-speech function to use the correct language
-async def text_to_speech(text):
-    tts = gTTS(text=text, lang=current_language)
+async def text_to_speech(text, language):
+    tts = gTTS(text=text, lang=language)
     filename = f"response_{int(time.time())}.mp3"
     file_path = os.path.join(settings.MEDIA_ROOT, filename)
     await sync_to_async(tts.save)(file_path)
@@ -199,42 +222,32 @@ def get_predefined_response(message):
     
     return None
 
-# Updated chatbot view to handle language changes
+# New function to translate text (placeholder - implement with a translation API)
+async def translate_text(text, target_language):
+    # This is a placeholder. You should implement actual translation logic here.
+    # For now, we'll just return the original text
+    return text
+
+# Updated chatbot view
 async def chatbot(request):
     global conversation_history, current_language
     
     if request.method == 'POST':
         message = request.POST.get('message')
         
-        # Detect the language of the message
-        detected_language = detect(message)
-        
-        # Update the current_language if a new language is detected
-        if detected_language != current_language:
-            current_language = detected_language
-        
-        # Check for language change requests
-        if "respond in" in message.lower():
-            language_request = message.lower().split("respond in")[-1].strip()
-            if language_request in ['english', 'marathi', 'hindi']:  # Add more languages as needed
-                current_language = language_request
-                response = f"Sure, I'll respond in {language_request} from now on."
-                conversation_history.append({'human': message, 'AI': response})
-                audio_file = await text_to_speech(response)
-                return JsonResponse({
-                    'message': message, 
-                    'response': response,
-                    'audio_url': request.build_absolute_uri(audio_file)
-                })
+        # Determine the response language
+        response_language = determine_response_language(message)
+        current_language = response_language  # Update the current language
         
         # Check for predefined responses
         predefined_response = get_predefined_response(message)
         if predefined_response:
-            conversation_history.append({'human': message, 'AI': predefined_response})
-            audio_file = await text_to_speech(predefined_response)
+            translated_response = await translate_text(predefined_response, response_language)
+            conversation_history.append({'human': message, 'AI': translated_response})
+            audio_file = await text_to_speech(translated_response, response_language)
             return JsonResponse({
                 'message': message, 
-                'response': predefined_response,
+                'response': translated_response,
                 'audio_url': request.build_absolute_uri(audio_file)
             })
         
@@ -244,10 +257,10 @@ async def chatbot(request):
         if uploaded_image:
             # Process the image and question using Gemini
             image = Image.open(uploaded_image)
-            response = await process_image_question(image, message)
+            response = await process_image_question(image, message, response_language)
         else:
             # Get response from Groq
-            groq_response = await ask_groq(message, conversation_history)
+            groq_response = await ask_groq(message, conversation_history, response_language)
             
             # Get additional information from the dataset
             dataset_info = await sync_to_async(get_dataset_info)(message)
@@ -262,7 +275,7 @@ async def chatbot(request):
         conversation_history = conversation_history[-10:]
         
         # Generate audio file asynchronously
-        audio_file = await text_to_speech(response)
+        audio_file = await text_to_speech(response, response_language)
         
         return JsonResponse({
             'message': message, 

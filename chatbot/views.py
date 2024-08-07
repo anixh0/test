@@ -23,8 +23,8 @@ from functools import lru_cache
 from langdetect import detect
 
 # Set the API keys directly
-groq_api_key = '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'
-google_api_key = 'AIzaSyBsNsY1-gm3D2INK1TJKpgbm-YPc6SxpWg'
+groq_api_key = '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'
+google_api_key = 'AIzaSyAhHzF6dtCxiIWlbj8pBFs4uB0DXcgw67U'
 huggingface_api_key = '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'
 
 # Initialize Groq Langchain chat object with Llama-3.1-70b-Versatile
